@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Zip Analysis</title>
+    <script type="text/javascript" src="js.utils.js"></script>
+    <script type="text/javascript" src="FileSaver.min.js"></script>
+  </head>
+  <body>
+    <input type="file" id="f" />
+
+<script type="module">
+  import { analyseZip, trimZip } from "./za.js";
+
+  window.onload = async function() {
+    let fileInput = document.querySelector('#f'),
+        result = document.querySelector('#result');
+  
+    fileInput.addEventListener('change', async function(e) {
+        const arrayBuffer = await readAsArrayBuffer(this.files[0]);
+        const data = new Uint8Array(arrayBuffer);
+        const result = await analyseZip(data);
+        eulog.log(result);
+
+        if ("error" in result) {
+           alert(result.error); 
+        } else {
+          const {entries, infoEOCD} = result;
+          //let tmp = await trimZip(data, entries, infoEOCD, "Uber Data/Rider");
+          //saveAs(new Blob([tmp]), "trimmedUber.zip");
+          let tmp = await trimZip(data, entries, infoEOCD, "Takeout/Location History");
+          saveAs(new Blob([tmp]), "trimmedTakeout.zip");
+        }
+    });  
+};
+</script>
+
+  </body>
+</html>
