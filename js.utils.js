@@ -8,6 +8,11 @@ function onerror(message) {
   console.log(message);
 }
 
+async function file2Ui8(file) {
+  const arrayBuffer = await readAsArrayBuffer(file);
+  return new Uint8Array(arrayBuffer);
+}
+
 function readAsDataURL(b) {
   return new Promise((resolve, reject) => {
     var fr = new FileReader();  
@@ -56,6 +61,18 @@ var eulog = (function () {
         }
     }
 }());
+
+function startsWithFactory(sw) {
+	return function(s) {
+  	return s.startsWith(sw);
+  }
+}
+
+function hasSwFactory(sw) {
+	return function(s) {
+  	return s.includes(sw);
+  }
+}
 
 var jsUtils = (function () {
   return {

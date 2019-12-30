@@ -9,25 +9,43 @@
     <input type="file" id="f" />
 
 <script type="module">
-  import { analyseZip, trimZip } from "./za.js";
+  import { analyseZip, modifyZip } from "./za.js";
 
   window.onload = async function() {
     let fileInput = document.querySelector('#f'),
         result = document.querySelector('#result');
   
     fileInput.addEventListener('change', async function(e) {
-        const arrayBuffer = await readAsArrayBuffer(this.files[0]);
-        const data = new Uint8Array(arrayBuffer);
-        const result = await analyseZip(data);
-        eulog.log(result);
+        const data = await file2Ui8(this.files[0]);
 
-        if ("error" in result) {
-           alert(result.error); 
+        const zipInfo = await analyseZip(data);
+  
+        eulog.log(zipInfo);
+
+        if ("error" in zipInfo) {
+           alert(zipInfo.error); 
+
         } else {
-          const {entries, infoEOCD} = result;
-          //let tmp = await trimZip(data, entries, infoEOCD, "Uber Data/Rider");
-          //saveAs(new Blob([tmp]), "trimmedUber.zip");
-          let tmp = await trimZip(data, entries, infoEOCD, "Takeout/Location History");
+
+/*
+Useful entry info:
+------------------
+directory: false
+filename: "Takeout/Location History/Location History.json"
+compressedSize: 56869573
+uncompressedSize: 908230232
+...
+*/
+          const options = { 
+            "filters": [ 
+               entry => entry.filename.startsWith("Takeout/Fit/Daily Aggregations"),  
+               entry => entry.filename.endsWith(".anon"),  
+               entry => entry.filename.indexOf("-24.") >= 0, 
+               entry => entry.uncompressedSize >= 15000 
+               ], 
+          };
+
+          let tmp = await modifyZip(data, zipInfo, options);
           saveAs(new Blob([tmp]), "trimmedTakeout.zip");
         }
     });  

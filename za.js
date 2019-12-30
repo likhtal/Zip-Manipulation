@@ -22,7 +22,15 @@ export async function analyseZip(data) {
   return { entries,  infoEOCD };
 }
 
-export async function trimZip(data, entries, infoEOCD, limitTo) {
+function verifyEligibility(entry, filters) {
+  return filters.map(q => q(entry)).every(q => q)
+}
+
+export async function modifyZip(data, zipInfo, options) {
+  const settings = Object.assign({}, {filters: [], commands:[]}, options);
+  eulog.log(settings);
+  
+  const {entries, infoEOCD} = zipInfo;
   let { endoffset, offset, entriesLeft, entriesTotal, cdSize, zipLength } = infoEOCD;
 
   let newSize = zipLength - endoffset;  // EOCD
@@ -32,7 +40,7 @@ export async function trimZip(data, entries, infoEOCD, limitTo) {
   let newCdOffset = 0;
 
   for (const entry of entries) {
-     if (!entry.filename.startsWith(limitTo)) {
+     if (!verifyEligibility(entry, settings.filters)) {
         continue;
      }
 
@@ -46,7 +54,7 @@ export async function trimZip(data, entries, infoEOCD, limitTo) {
   // first selected LFH+file+DD (saving new offset)
   // no modifications
   for (const entry of entries) {
-     if (!entry.filename.startsWith(limitTo)) {
+     if (!verifyEligibility(entry, settings.filters)) {
         continue;
      }
 
@@ -66,7 +74,7 @@ export async function trimZip(data, entries, infoEOCD, limitTo) {
   newCdOffset = newOffset;
 
   for (const entry of entries) {
-     if (!entry.filename.startsWith(limitTo)) {
+     if (!verifyEligibility(entry, settings.filters)) {
         continue;
      }
 
