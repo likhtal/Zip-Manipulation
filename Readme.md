@@ -1,1 +1,4 @@
-### Analyze and trim (i.e. leave only certain files) a zip file without decompression  - very quick and efficient, even though it was written in JavaScript.
+# Zip-Manipulation
+Manipulate zips w/o decompression and re-compression (get info/remove unneeded files; rename files).
+Written in pure vanilla JavaScript.
+

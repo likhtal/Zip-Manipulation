@@ -26,9 +26,26 @@ function verifyEligibility(entry, filters) {
   return filters.map(q => q(entry)).every(q => q)
 }
 
+// entry: {filename, utfq}
+// finfo: { offset, bitFlag, fileNameLength, extraFieldLength, fileStart, ddq, lfhSize, fileSize, ddSize, totalSize }
+// new TextEncoder('utf-8').encode('Hello') => Uint8Array(5) [72, 101, 108, 108, 111]
+// new TextDecoder(utfq).decode((new Uint8Array([72, 101, 108, 108, 111]))   -- utf-8 or ascii
+
+function modifyFileName(entry, commands) {
+  const fileNameLength = new TextEncoder(entry.utfq).encode(entry.filename).length;
+  let newFilename = entry.filename;
+
+  for (let cmd of commands) {
+     newFilename = cmd(entry);
+  }
+
+  const newFilenameEncoded = new TextEncoder(entry.utfq).encode(newFilename);
+  const newFileNameLength = newFilenameEncoded.length;
+  return { newFilename, newFilenameEncoded, newFileNameLength, increment: newFileNameLength-fileNameLength }
+}
+
 export async function modifyZip(data, zipInfo, options) {
   const settings = Object.assign({}, {filters: [], commands:[]}, options);
-  eulog.log(settings);
   
   const {entries, infoEOCD} = zipInfo;
   let { endoffset, offset, entriesLeft, entriesTotal, cdSize, zipLength } = infoEOCD;
@@ -44,30 +61,57 @@ export async function modifyZip(data, zipInfo, options) {
         continue;
      }
 
+     entry["n"] = {};
      entry["nf"] = {};
-     newSize += entry.eSize;
-     newSize += entry.finfo.totalSize;
+     entry["mfn"] = modifyFileName(entry, settings.commands);
+
+     entry.n.eSize = entry.eSize + entry.mfn.increment;
+     entry.nf.lfhSize = entry.finfo.lfhSize + entry.mfn.increment;
+     entry.nf.totalSize = entry.finfo.totalSize + entry.mfn.increment;
+
+     newSize += entry.n.eSize;         // eSize: 46 + fileNameLength + extraFieldLength + fileCommentLength
+     newSize += entry.nf.totalSize;    // const lfhSize = 30 + fileNameLength + extraFieldLength;
+                                       // const totalSize = lfhSize + fileSize + ddSize;
   }
 
   let tmp = new Uint8Array(newSize);
 
   // first selected LFH+file+DD (saving new offset)
-  // no modifications
+  // lfhSize = 30 + fileNameLength + extraFieldLength;
+  // 26	2 File name length (n)
   for (const entry of entries) {
      if (!verifyEligibility(entry, settings.filters)) {
         continue;
      }
 
      newCount += 1;
-     let sliceAb = data.subarray(entry.finfo.offset, entry.finfo.offset + entry.finfo.totalSize);
-
-     tmp.set(new Uint8Array(sliceAb), newOffset);
-
      entry.nf.offset = newOffset;
-     newOffset += entry.finfo.totalSize;
+
+     let sliceAbLfh30 = data.buffer.slice(entry.finfo.offset, entry.finfo.offset + 30);
+     let viewLfh30 = new DataView(sliceAbLfh30);
+     viewLfh30.setUint16(26, entry.mfn.newFileNameLength, true);
+     tmp.set(new Uint8Array(sliceAbLfh30), newOffset);
+     newOffset += 30;
+
+     tmp.set(entry.mfn.newFilenameEncoded, newOffset);
+     newOffset += entry.mfn.newFileNameLength;
+
+     if (entry.finfo.extraFieldLength != 0) {
+        let sliceExtra = data.subarray(entry.finfo.offset + 30 + entry.finfo.fileNameLength, 
+                                       entry.finfo.offset + 30  + entry.finfo.fileNameLength + entry.finfo.extraFieldLength);
+        tmp.set(new Uint8Array(sliceExtra), newOffset);        
+        newOffset += entry.finfo.extraFieldLength;
+     }
+
+     if (entry.finfo.fileSize + entry.finfo.ddSize != 0) {
+        let sliceFD = data.subarray(entry.finfo.fileStart, entry.finfo.fileStart + entry.finfo.fileSize + entry.finfo.ddSize);
+        tmp.set(new Uint8Array(sliceFD), newOffset);        
+        newOffset += entry.finfo.fileSize + entry.finfo.ddSize;
+     }
   }
 
   // Then selected CDs (saving new offset)
+  // 28 2 File name length (n)
   // 42	4 Relative offset of local file header. This is the number of bytes between the start of the first disk on which the file occurs, and the start of the local file header. This allows software reading the central directory to locate the position of the file inside the ZIP file.
   // const lfhOffset = view.getUint32(offset + 42, true);
 
@@ -78,14 +122,24 @@ export async function modifyZip(data, zipInfo, options) {
         continue;
      }
 
-     newCdSize += entry.eSize;
-     let sliceAb = data.buffer.slice(entry.eOffset, entry.eOffset + entry.eSize); // slice - since modifications
+     newCdSize += entry.n.eSize;
 
-     let view = new DataView(sliceAb);
-     view.setUint32(42, entry.nf.offset, true);
+     let sliceAbCd46 = data.buffer.slice(entry.eOffset, entry.eOffset + 46); // 46 - min size - before filename
+     let viewCd46 = new DataView(sliceAbCd46);
+     viewCd46.setUint16(28, entry.mfn.newFileNameLength, true);
+     viewCd46.setUint32(42, entry.nf.offset, true);
 
-     tmp.set(new Uint8Array(sliceAb), newOffset);
-     newOffset += entry.eSize;
+     tmp.set(new Uint8Array(sliceAbCd46), newOffset);
+     newOffset += 46;
+
+     tmp.set(entry.mfn.newFilenameEncoded, newOffset);
+     newOffset += entry.mfn.newFileNameLength;
+
+     if (entry.eSize > 46 + entry.fileNameLength) {
+       let sliceAbCd = data.buffer.slice(entry.eOffset + 46 + entry.fileNameLength, entry.eOffset + entry.eSize - 46 - entry.fileNameLength);
+       tmp.set(new Uint8Array(sliceAbCd), newOffset);
+       newOffset += entry.eSize - 46 - entry.fileNameLength;
+     }
   }
 
   // finally: EOCD
@@ -210,6 +264,8 @@ function getEntries(data, {endoffset, offset, entriesLeft}) {
     entries.push({
       directory: filename.endsWith('/'),
       filename: filename,
+      fileNameLength: fileNameLength,
+      utfq: utfq,
       compressedSize: compressedSize,
       uncompressedSize: uncompressedSize,
       eOffset: offset,
@@ -267,7 +323,7 @@ function getLFH(data, offset, size) {
   var view = new DataView(data.buffer, data.byteOffset, data.length);
 
   if (view.getUint32(offset) != LOCAL_FILE_HEADER) {
-    return { fileStart: 0, fileLength:0, ddq: false, offset: 0, totalSize: 0 }
+    return { offset: 0, bitFlag: 0, fileNameLength: 0, extraFieldLength: 0, fileStart: 0, ddq: 0, lfhSize: 0, fileSize: 0, ddSize: 0, totalSize: 0 }
   }
 
   const bitFlag = view.getUint16(offset + 6, true);
@@ -279,20 +335,21 @@ function getLFH(data, offset, size) {
   const ddq = (bitFlag & 0x08) ? true : false;
 
   let fileStart = offset + 30 + fileNameLength + extraFieldLength;
-  let fileLength = size;
+  let fileSize = size;
 
   let ddSize = 0;
   if (ddq) {
-    if (view.getUint32(fileStart + fileLength) != DATA_DESCRIPTOR) {
+    if (view.getUint32(fileStart + fileSize) != DATA_DESCRIPTOR) {
        ddSize = 12;
-       fileLength = view.getUint32(fileStart + fileLength + 4, true);
+       fileSize = view.getUint32(fileStart + fileSize + 4, true);
     } else {
        ddSize = 16;
-       fileLength = view.getUint32(fileStart + fileLength + 8, true);
+       fileSize = view.getUint32(fileStart + fileSize + 8, true);
     }
   }
 
-  const totalSize = 30 + fileNameLength + extraFieldLength + fileLength + ddSize;
+  const lfhSize = 30 + fileNameLength + extraFieldLength;
+  const totalSize = lfhSize + fileSize + ddSize;
 
-  return { fileStart, fileLength, ddq, offset, totalSize };
+  return { offset, bitFlag, fileNameLength, extraFieldLength, fileStart, ddq, lfhSize, fileSize, ddSize, totalSize };
 }

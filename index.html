@@ -16,8 +16,8 @@
         result = document.querySelector('#result');
   
     fileInput.addEventListener('change', async function(e) {
-        const data = await file2Ui8(this.files[0]);
-
+        const f = this.files[0];
+        const data = await file2Ui8(f);
         const zipInfo = await analyseZip(data);
   
         eulog.log(zipInfo);
@@ -31,22 +31,24 @@
 Useful entry info:
 ------------------
 directory: false
-filename: "Takeout/Location History/Location History.json"
+filename: "Takeout/Location History/Location History.json.anon"
 compressedSize: 56869573
 uncompressedSize: 908230232
 ...
 */
           const options = { 
             "filters": [ 
-               entry => entry.filename.startsWith("Takeout/Fit/Daily Aggregations"),  
-               entry => entry.filename.endsWith(".anon"),  
-               entry => entry.filename.indexOf("-24.") >= 0, 
-               entry => entry.uncompressedSize >= 15000 
+                 entry => entry.filename.endsWith(".anon"),    // leave only ".anon" files from the original
+               ], 
+            "commands": [ 
+                 entry => (entry.directory || !entry.filename.endsWith(".anon")) ?  // and remove that ".anon" extension
+                           entry.filename : 
+                           entry.filename.slice(0, -".anon".length)
                ], 
           };
 
           let tmp = await modifyZip(data, zipInfo, options);
-          saveAs(new Blob([tmp]), "trimmedTakeout.zip");
+          saveAs(new Blob([tmp]), f.name + ".trimmed.zip");
         }
     });  
 };
